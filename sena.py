@@ -24,7 +24,6 @@ def main():
                 content = file.read()
             decompressed_content = zlib.decompress(content)
             text_data = decompressed_content.decode("utf-8")
-            #print(text_data)
             filtered_data = re.sub(r"^.*?\x00", "", text_data)
             print(filtered_data, end="")
             
@@ -43,6 +42,26 @@ def main():
             new_file.write(compressed_file)
         print(sha)
         
+     elif command == "ls-tree":
+        terminal_input_len = len(sys.argv)
+        if terminal_input_len == 3:
+            # Aqui vai a ls-tree completa
+            teste = 0
+        else:
+            option = sys.argv[2]
+            tree_sha = sys.argv[3]
+            if option == "--name-only":
+                with open(f".sena/objects/{tree_sha[:2]}/{tree_sha[2:]}", "rb") as file:
+                    compressed_content = file.read()
+                decompressed_content = zlib.decompress(compressed_content)
+                header, content = decompressed_content.split(b"\0", 1)
+                while content:
+                    mode_name, content = content.split(b"\0", 1)
+                    hash_, content = content[:20], content[20:]
+                    mode_name = mode_name.decode("utf-8")
+                    mode, name = mode_name.split(" ")
+                    print(name)
+
      else:
          raise RuntimeError(f"Unknown command {command}")
 

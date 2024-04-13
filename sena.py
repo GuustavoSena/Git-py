@@ -1,69 +1,157 @@
-import codecs
+import hashlib
 import sys
 import os
-import re
 import zlib
-import hashlib
+from typing import List
+
+def init():
+     os.mkdir(".sena")
+     os.mkdir(".sena/objects")
+     os.mkdir(".sena/refs")
+     with open(".sena/HEAD", "w") as f:
+        f.write("ref: refs/heads/main\n")
+     print("Initialized sena directory")
+
+def cat_file():
+    p = sys.argv[2]
+    revision = sys.argv[3]
+    assert p == "-p"
+
+    folder, file = revision[:2], revision[2:]
+    with open(f".sena/objects/{folder}/{file}", "rb") as f:
+        compressed = f.read()
+    raw_content = zlib.decompress(compressed)
+
+    header: bytes
+    content: bytes
+    header, content = raw_content.split(b'\0', maxsplit=1)
+
+    file_type: str
+    size_raw: str
+    file_type, size_raw = header.decode().split(maxsplit=1)
+    size = int(size_raw)
+    assert file_type == 'blob'
+    assert size == len(content)
+
+    text_data : str
+    text_data = content.decode("utf-8")
+    print(text_data, end="")
+    # Raw bytes output:
+    #sys.stdout.buffer.write(content)
+    #sys.stdout.flush()
+
+def hash_object(filename: str = None) -> str:
+    if filename is None:
+        w = sys.argv[2]
+        filename = sys.argv[3]
+        assert w == "-w"
+
+    with open(filename, "rb") as f:
+        content = f.read()
+
+    size = len(content)
+    header = f"blob {size}".encode()
+    raw_content = header + b'\0' + content
+    digest = hashlib.sha1(raw_content).hexdigest()
+    compressed = zlib.compress(raw_content)
+
+    folder, file = digest[:2], digest[2:]
+
+    os.makedirs(f".sena/objects/{folder}", exist_ok=True)
+    with open(f".sena/objects/{folder}/{file}", 'wb') as f:
+        f.write(compressed)
+    return digest
+
+def ls_tree():
+    no = sys.argv[2]
+    revision = sys.argv[3]
+    assert no == "--name-only"
+
+    folder, file = revision[:2], revision[2:]
+    with open(f".sena/objects/{folder}/{file}", "rb") as f:
+        compressed = f.read()
+    raw_content = zlib.decompress(compressed)
+
+    header: bytes
+    content: bytes
+    header, content = raw_content.split(b'\0', maxsplit=1)
+
+    file_type: str
+    size_raw: str
+    file_type, size_raw = header.decode().split(maxsplit=1)
+    size = int(size_raw)
+    assert file_type == 'tree'
+    assert size == len(content)
+
+    while True:
+        if not content:
+            break
+        file_header: bytes
+        rest: bytes
+        file_sha: bytes
+        file_header, rest = content.split(b'\0', maxsplit=1)
+        file_sha, content = rest[:20], rest[20:]
+        mode, filename = file_header.decode().split()
+        hex_digest = file_sha.hex()
+        # print(mode, filename, hex_digest)
+        print(filename)
+
+def write_tree(path: str) -> str:
+    entries: dict[str, bytes] = {}
+    for entry in os.scandir(path):
+        if entry.name == '.sena':
+            continue
+
+        # digest: str = ''
+        # name: str = ''
+        # mode: str = ''
+
+        if entry.is_file():
+            digest = hash_object(os.path.join(path, entry.name))
+            name = entry.name
+            mode = '100644'
+        else:
+            digest = write_tree(os.path.join(path, entry.name))
+            name = entry.name
+            # TODO: not '040000' for some reason
+            mode = '40000'
+
+        entries[name] = f'{mode} {name}'.encode() + b'\0' + bytes.fromhex(digest)
+
+    content: bytes
+    result: List[bytes]
+    result = [value for key, value in sorted(entries.items())]
+    content = b''.join(result)
+
+    # Same code
+    size = len(content)
+    header = f"tree {size}".encode()
+    raw_content = header + b'\0' + content
+
+    digest = hashlib.sha1(raw_content).hexdigest()
+    compressed = zlib.compress(raw_content)
+
+    folder, file = digest[:2], digest[2:]
+
+    os.makedirs(f".sena/objects/{folder}", exist_ok=True)
+    with open(f".sena/objects/{folder}/{file}", 'wb') as f:
+        f.write(compressed)
+    return digest
 
 def main():
      command = sys.argv[1]
-     
      if command == "init":
-         os.mkdir(".sena")
-         os.mkdir(".sena/objects")
-         os.mkdir(".sena/refs")
-         with open(".sena/HEAD", "w") as f:
-             f.write("ref: refs/heads/main\n")
-         print("Initialized sena directory")
-         
+         init()
      elif command == "cat-file":
-        option = sys.argv[2]
-        file = sys.argv[3]
-        if option == "-p":
-            with open(f".sena/objects/{file[:2]}/{file[2:]}", "rb") as file:
-                content = file.read()
-            decompressed_content = zlib.decompress(content)
-            text_data = decompressed_content.decode("utf-8")
-            filtered_data = re.sub(r"^.*?\x00", "", text_data)
-            print(filtered_data, end="")
-            
+         cat_file()
      elif command == "hash-object":
-        file_name = sys.argv[3]
-        with open(file_name, "rb") as file:
-            content = file.read()
-            file_len = len(content)
-            prefix = f"blob {file_len}\0".encode('utf-8')
-            str_to_hash = prefix + content
-            result = hashlib.sha1(str_to_hash)
-            sha = result.hexdigest()
-        os.mkdir(f".sena/objects/{sha[:2]}")
-        with open(f".sena/objects/{sha[:2]}/{sha[2:]}", "wb") as new_file:
-            compressed_file = zlib.compress(str_to_hash)
-            new_file.write(compressed_file)
-        print(sha)
-        
+        print(hash_object())
      elif command == "ls-tree":
-        terminal_input_len = len(sys.argv)
-        if terminal_input_len == 3:
-            # Aqui vai a ls-tree completa
-            teste = 0
-        else:
-            option = sys.argv[2]
-            tree_sha = sys.argv[3]
-            if option == "--name-only":
-                with open(f".sena/objects/{tree_sha[:2]}/{tree_sha[2:]}", "rb") as file:
-                    compressed_content = file.read()
-                decompressed_content = zlib.decompress(compressed_content)
-                header, content = decompressed_content.split(b"\0", 1)
-                while content:
-                    mode_name, content = content.split(b"\0", 1)
-                    hash_, content = content[:20], content[20:]
-                    mode_name = mode_name.decode("utf-8")
-                    mode, name = mode_name.split(" ")
-                    print(name)
-
+        ls_tree()
+     elif command == "write-tree":
+        print(write_tree('.'))
      else:
-         raise RuntimeError(f"Unknown command {command}")
+         raise RuntimeError(f"Unknown command #{command}")
 
 if __name__ == "__main__":
     main()
